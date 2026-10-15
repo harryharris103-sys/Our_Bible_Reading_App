@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Our Bible Reading</title>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Nunito:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#1d2b4f;--sun:#f2b632;--leaf:#2f9e6e;--sky:#e8f1fb;--coral:#e4572e;--paper:#fff}
+*{box-sizing:border-box}
+body{margin:0;font:17px/1.5 Nunito,system-ui,sans-serif;background:var(--sky);color:var(--ink)}
+h1,h2,h3{font-family:'Baloo 2',system-ui,sans-serif;margin:.2em 0}
+header{background:var(--ink);color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+header h1{font-size:22px;margin:0}
+main{max-width:760px;margin:0 auto;padding:16px}
+.card{background:var(--paper);border-radius:16px;padding:16px;margin:12px 0;border:2px solid var(--ink)}
+button,select,input{font:inherit;color:var(--ink)}
+button{background:var(--sun);border:2px solid var(--ink);border-radius:12px;padding:10px 16px;font-weight:700;cursor:pointer;min-height:44px}
+button.ghost{background:#fff}button.go{background:var(--leaf);color:#fff}button.del{background:#fff;color:var(--coral);border-color:var(--coral)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--coral);outline-offset:2px}
+input,select{border:2px solid var(--ink);border-radius:10px;padding:9px 10px;background:#fff;min-height:44px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.bar{height:14px;border-radius:8px;background:#dbe6f3;overflow:hidden;margin:6px 0}
+.bar i{display:block;height:100%;background:var(--leaf);transition:width .4s}
+.chip{display:inline-block;border-radius:20px;padding:2px 10px;font-size:14px;font-weight:700;border:2px solid var(--ink)}
+.chip.new{background:#fff}.chip.reading{background:var(--sun)}.chip.done{background:var(--leaf);color:#fff}
+.muted{opacity:.7;font-size:15px}
+.verse{margin:0 0 .6em}.verse sup{color:var(--coral);font-weight:800;margin-right:4px}
+.reader{font-size:20px;line-height:1.7}
+.assign{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px dashed #b8c7dd;flex-wrap:wrap}
+#err{color:var(--coral);font-weight:700}
+</style></head><body>
+<header><h1>📖 Our Bible Reading</h1><button class="ghost" id="out" hidden>Leave</button></header>
+<main id="app"></main>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+/* ===== SETTINGS: edit these ===== */
+const FIREBASE_CONFIG = { apiKey:"PASTE", authDomain:"PASTE", projectId:"PASTE", appId:"PASTE" };
+const TEACHER_PIN = "1234";                       // change this
+const VERSIONS = { NIV:"NIV.json", NLT:"NLT.json", GNB:"GNB.json", AMP:"AMP.json" }; // files in same folder as this page
+const KIDS_VERSION = "NLT";
+/* ================================ */
+const BOOKS="Genesis,Exodus,Leviticus,Numbers,Deuteronomy,Joshua,Judges,Ruth,1 Samuel,2 Samuel,1 Kings,2 Kings,1 Chronicles,2 Chronicles,Ezra,Nehemiah,Esther,Job,Psalms,Proverbs,Ecclesiastes,Song of Solomon,Isaiah,Jeremiah,Lamentations,Ezekiel,Daniel,Hosea,Joel,Amos,Obadiah,Jonah,Micah,Nahum,Habakkuk,Zephaniah,Haggai,Zechariah,Malachi,Matthew,Mark,Luke,John,Acts,Romans,1 Corinthians,2 Corinthians,Galatians,Ephesians,Philippians,Colossians,1 Thessalonians,2 Thessalonians,1 Timothy,2 Timothy,Titus,Philemon,Hebrews,James,1 Peter,2 Peter,1 John,2 John,3 John,Jude,Revelation".split(",");
+const $=s=>document.querySelector(s), app=$("#app");
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let db,unsub,bibles={},role=null;
+try{firebase.initializeApp(FIREBASE_CONFIG);db=firebase.firestore();}catch(e){}
+const kids=()=>db.collection("kids");
+const label=a=>`${a.book} ${a.c1}${a.c2&&a.c2!=a.c1?"–"+a.c2:""}${a.v1?":"+a.v1+(a.v2&&a.v2!=a.v1?"–"+a.v2:""):""}`;
+const ago=t=>{if(!t)return"not yet";const m=Math.round((Date.now()-t)/6e4);return m<1?"just now":m<60?m+" min ago":m<1440?Math.round(m/60)+" h ago":Math.round(m/1440)+" d ago"};
+
+/* ---- Bible JSON loader: tolerant of common shapes ---- */
+const txt=v=>typeof v==="string"?v:(v&&(v.text||v.Text||v.verse||v.t)||"");
+const list=o=>Array.isArray(o)?o:Object.keys(o).sort((a,b)=>a-b).map(k=>o[k]);
+function norm(j){
+  if(j.books)j=j.books;
+  const ch=x=>list(x).map(c=>list(c.verses||c).map(txt));
+  if(Array.isArray(j)&&j[0]&&(j[0].chapters||j[0].Chapters))return j.map(b=>ch(b.chapters||b.Chapters));
+  if(Array.isArray(j)&&j[0]&&typeof j[0]==="object"&&!Array.isArray(j[0])&&(j[0].verse!==undefined||j[0].Verse!==undefined)){
+    const out=[],idx={};
+    j.forEach(r=>{const b=r.book||r.Book,c=r.chapter||r.Chapter,v=r.verse||r.Verse,t=r.text||r.Text;
+      if(!(b in idx)){idx[b]=out.length;out.push([])}
+      const B=out[idx[b]];(B[c-1]=B[c-1]||[])[v-1]=t});
+    return out;
+  }
+  return list(j).map(b=>ch(b.chapters||b));
+}
+async function loadBible(v){
+  if(bibles[v])return bibles[v];
+  const r=await fetch(VERSIONS[v]);if(!r.ok)throw new Error("Could not load "+v);
+  return bibles[v]=norm(await r.json());
+}
+
+/* ---- Screens ---- */
+function home(msg=""){
+  unsub&&unsub();role=null;$("#out").hidden=true;
+  app.innerHTML=`<div class="card"><h2>I'm a student</h2><p>Type the secret code your teacher gave you.</p>
+  <div class="row"><input id="code" inputmode="numeric" maxlength="6" placeholder="Your code" aria-label="Your code"><button class="go" id="kidgo">Start reading</button></div></div>
+  <div class="card"><h2>I'm the teacher</h2><div class="row"><input id="pin" type="password" placeholder="Teacher PIN" aria-label="Teacher PIN"><button id="tgo">Open dashboard</button></div></div>
+  <p id="err">${msg}</p>${db?"":'<p id="err">Firebase is not set up yet. Add your settings at the top of this file.</p>'}`;
+  $("#kidgo").onclick=async()=>{
+    const c=$("#code").value.trim();if(!c)return;
+    const s=await kids().where("code","==",c).get();
+    s.empty?home("That code didn't work. Check it with your teacher."):kidView(s.docs[0].id);
+  };
+  $("#tgo").onclick=()=>$("#pin").value===TEACHER_PIN?teacherView():home("Wrong PIN.");
+}
+
+function kidView(id){
+  role="kid";$("#out").hidden=false;
+  unsub&&unsub();
+  unsub=kids().doc(id).onSnapshot(s=>{
+    const k=s.data();if(!k)return home("Your account was removed.");
+    const A=k.assignments||[],d=A.filter(a=>a.status==="done").length;
+    app.innerHTML=`<h2>Hi ${esc(k.name)}! 👋</h2>
+    <div class="card"><strong>${d} of ${A.length} done</strong><div class="bar"><i style="width:${A.length?d/A.length*100:0}%"></i></div>
+    ${A.length?"":"<p>No reading assigned yet. Check back soon!</p>"}
+    ${A.map(a=>`<div class="assign"><div><strong>${esc(label(a))}</strong> <span class="chip ${a.status}">${a.status==="done"?"Done ✓":a.status==="reading"?"Reading":"New"}</span></div>
+    <button data-r="${a.id}" class="${a.status==="done"?"ghost":"go"}">${a.status==="done"?"Read again":"Read"}</button></div>`).join("")}</div>`;
+    app.querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>reader(id,A.find(a=>a.id===b.dataset.r)));
+  });
+}
+
+async function reader(id,a){
+  const ver=KIDS_VERSION;app.innerHTML=`<p>Loading…</p>`;
+  if(a.status==="new")await patch(id,a.id,{status:"reading",openedAt:Date.now()});
+  try{
+    const B=(await loadBible(ver))[BOOKS.indexOf(a.book)];let h="";
+    for(let c=a.c1;c<=(a.c2||a.c1);c++){
+      const V=B[c-1]||[];h+=`<h3>${esc(a.book)} ${c}</h3>`;
+      V.forEach((t,i)=>{const n=i+1;if(a.v1&&c===a.c1&&n<a.v1)return;if(a.v2&&c===(a.c2||a.c1)&&n>a.v2)return;
+        h+=`<p class="verse"><sup>${n}</sup>${esc(t)}</p>`});
+    }
+    app.innerHTML=`<div class="row"><button class="ghost" id="back">← Back</button><span class="muted">${ver}</span></div>
+    <div class="card reader">${h}</div><div class="card"><button class="go" id="done" style="width:100%;font-size:20px">${a.status==="done"?"Marked done ✓":"I finished reading ✓"}</button></div>`;
+    $("#back").onclick=()=>kidView(id);
+    $("#done").onclick=async()=>{await patch(id,a.id,{status:"done",doneAt:Date.now()});kidView(id)};
+  }catch(e){app.innerHTML=`<p id="err">${esc(e.message)}. Ask your teacher for help.</p><button id="back">Back</button>`;$("#back").onclick=()=>kidView(id)}
+}
+
+async function patch(id,aid,p){
+  const ref=kids().doc(id),s=await ref.get(),A=s.data().assignments.map(a=>a.id===aid?{...a,...p}:a);
+  await ref.update({assignments:A,lastActive:Date.now()});
+}
+
+function teacherView(){
+  role="teacher";$("#out").hidden=false;unsub&&unsub();
+  const bopt=BOOKS.map(b=>`<option>${b}</option>`).join("");
+  app.innerHTML=`<div class="card"><h3>Add a student</h3><div class="row"><input id="nm" placeholder="Student name"><button id="add">Add</button></div></div>
+  <div class="card"><h3>Assign reading</h3><div class="row"><select id="who"></select><select id="bk">${bopt}</select></div>
+  <div class="row" style="margin-top:8px"><input id="c1" type="number" min="1" placeholder="From ch." style="width:100px"><input id="c2" type="number" min="1" placeholder="To ch." style="width:100px">
+  <input id="v1" type="number" min="1" placeholder="Verse from" style="width:110px"><input id="v2" type="number" min="1" placeholder="Verse to" style="width:110px"></div>
+  <p class="muted">Leave verses empty for whole chapters. Leave "To ch." empty for a single chapter.</p>
+  <button class="go" id="asg">Assign</button> <span id="msg" class="muted"></span></div>
+  <h2>Live progress</h2><div id="list"></div>`;
+  $("#add").onclick=async()=>{const n=$("#nm").value.trim();if(!n)return;
+    await kids().add({name:n,code:String(Math.floor(1000+Math.random()*9000)),assignments:[],lastActive:0});$("#nm").value=""};
+  let K=[];
+  unsub=kids().orderBy("name").onSnapshot(s=>{
+    K=s.docs.map(d=>({id:d.id,...d.data()}));
+    const cur=$("#who").value;$("#who").innerHTML=K.map(k=>`<option value="${k.id}">${esc(k.name)}</option>`).join("");if(cur)$("#who").value=cur;
+    $("#list").innerHTML=K.map(k=>{const A=k.assignments||[],d=A.filter(a=>a.status==="done").length;
+      return`<div class="card"><div class="row" style="justify-content:space-between"><h3>${esc(k.name)} <span class="muted">code ${k.code}</span></h3><span class="muted">active ${ago(k.lastActive)}</span></div>
+      <strong>${d} of ${A.length} done</strong><div class="bar"><i style="width:${A.length?d/A.length*100:0}%"></i></div>
+      ${A.map(a=>`<div class="assign"><span>${esc(label(a))} <span class="chip ${a.status}">${a.status==="done"?"Done "+ago(a.doneAt):a.status==="reading"?"Reading":"Not started"}</span></span><button class="del" data-k="${k.id}" data-a="${a.id}">Remove</button></div>`).join("")}
+      <button class="del" data-rm="${k.id}" style="margin-top:8px">Delete student</button></div>`}).join("")||"<p>Add your first student above.</p>";
+    app.querySelectorAll("[data-a]").forEach(b=>b.onclick=async()=>{const k=K.find(x=>x.id===b.dataset.k);
+      await kids().doc(k.id).update({assignments:k.assignments.filter(a=>a.id!==b.dataset.a)})});
+    app.querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>confirm("Delete this student and their progress?")&&kids().doc(b.dataset.rm).delete());
+  });
+  $("#asg").onclick=async()=>{
+    const k=K.find(x=>x.id===$("#who").value),c1=+$("#c1").value;if(!k||!c1)return $("#msg").textContent="Pick a student and a chapter.";
+    const a={id:Date.now().toString(36),book:$("#bk").value,c1,c2:+$("#c2").value||c1,v1:+$("#v1").value||0,v2:+$("#v2").value||0,status:"new"};
+    await kids().doc(k.id).update({assignments:[...(k.assignments||[]),a]});$("#msg").textContent="Assigned: "+label(a);
+  };
+}
+$("#out").onclick=()=>home();
+home();
+</script></body></html>

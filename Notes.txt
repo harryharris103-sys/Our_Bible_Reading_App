@@ -1,0 +1,16 @@
+**How it works**
+- **Students:** each child gets a 4-digit code. They enter it, see their assigned readings, tap **Read**, then tap **I finished reading ✓** when done. Opening a reading marks it "Reading".
+- **You:** open the page with your PIN. You can add students, assign a book with a chapter range or verse range, and remove assignments. The dashboard updates live, showing each child's progress bar, status per assignment (Not started, Reading, Done), and when they were last active.
+
+**Setup (about 10 minutes)**
+1. Realtime monitoring needs a small online database, so the file uses Firebase, which has a free tier. Create a project at console.firebase.google.com, add a Web app, and turn on **Firestore Database**.
+2. Paste the four config values and your own teacher PIN into the settings block at the top of the file.
+3. Upload `index.html` to your GitHub repo next to your Bible JSON files and turn on GitHub Pages. Share that link with the children's parents.
+4. Check that the `VERSIONS` file names match yours, and set `KIDS_VERSION` to the version you want the children to read. I assumed NLT.
+
+**Things to know**
+- **JSON format:** I don't know the exact layout of your files, so the loader tries the common shapes and assumes books are in the usual Genesis-to-Revelation order. If a reading shows empty or errors, send me the first few lines of one file and I'll match it exactly.
+- **Security:** the PIN is checked inside the page, and the simplest Firestore rules are open. That is fine for a class of children, but I wouldn't store anything sensitive. Using only first names is a good idea. I can add proper teacher login later if you want.
+- **Not built yet:** offline reading, notes, and a "last read" bookmark.
+
+If you want, I can write the exact Firestore rules and walk you through the Firebase screens step by step.
